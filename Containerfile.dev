@@ -1,0 +1,4 @@
+FROM docker.io/python:latest
+WORKDIR /src
+ENTRYPOINT ["python", "main.py"]
+
