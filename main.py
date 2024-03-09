@@ -2,15 +2,17 @@ import ast
 import sys
 import textwrap
 
-class Program:
-  def __init__(self):
-    self.session = 'test-session'
-    self.buffer = []
+class Function:
+  def __init__(self, name):
+    self.waitfor = 'main'
+    self.name = name
     self.index = 0
-
+    self.buffer = []
   def next_window_index(self):
     self.index += 1
     return self.index
+  def debug(self, text):
+    self.buffer.append('\n# ' + text + '\n')
   def write(self, contents, index=None):
     if contents is None:
       self.buffer.append(None)
@@ -24,13 +26,6 @@ class Program:
   def to_string(self):
     return '\n'.join(self.buffer)
 
-  def add_header(self):
-    self.write("""\
-        new-session -d -n %s 'read && tmux wait-for -S %s'
-        set -g display-time 2000
-        set -g focus-events on
-        """ % (self.session, self.session))
-
   def push_constant(self, value):
     index = self.next_window_index()
     self.write("""\
@@ -39,7 +34,7 @@ class Program:
         run "tmux set-buffer '%s'"
         run 'tmux next-window'
       }
-      """ % (self.session, index, value))
+      """ % (self.waitfor, index, value))
 
   def store_top(self, out_index=None):
     index = self.next_window_index()
@@ -50,7 +45,7 @@ class Program:
         run 'tmux delete-buffer'
         run 'tmux next-window'
       }
-      """ % (self.session, index, index + 1 if out_index is None else out_index))
+      """ % (self.waitfor, index, index + 1 if out_index is None else out_index))
 
   def maths_op(self, op):
     self.store_top()
@@ -63,7 +58,7 @@ class Program:
         run 'tmux set-buffer "#{window_name}"'
         run 'tmux next-window'
       }
-      """ % (self.session, index, index, op))
+      """ % (self.waitfor, index, index, op))
 
   def print(self):
     index = self.next_window_index()
@@ -74,7 +69,7 @@ class Program:
         run 'tmux delete-buffer'
         run 'tmux next-window'
       }
-      """ % (self.session, index))
+      """ % (self.waitfor, index))
 
   def print_str(self, text):
     index = self.next_window_index()
@@ -85,7 +80,7 @@ class Program:
         run 'sleep 2'
         run 'tmux next-window'
       }
-      """ % (self.session, index, text))
+      """ % (self.waitfor, index, text))
 
   def cond(self):
     instruction_index = self.next_window_index()
@@ -97,56 +92,119 @@ class Program:
           run 'tmux select-window -t "#{?#{buffer_sample},:=%s,:=%s}"'
           run 'tmux delete-buffer'
         }
-        """ % (self.session, instruction_index, instruction_index + 1, self.index + 1), pos)
+        """ % (self.waitfor, instruction_index, instruction_index + 1, self.index + 1), pos)
     return add_with_indexes_later
 
-ast.Add.compile_to = lambda self, program: program.maths_op('+')
-ast.Sub.compile_to = lambda self, program: program.maths_op('-')
-ast.Mult.compile_to = lambda self, program: program.maths_op('*')
-ast.Div.compile_to = lambda self, program: program.maths_op('/')
+  def set_variable(self, name):
+    index = self.next_window_index()
+    self.write("""\
+      new-window 'tmux wait-for %s'
+      set-hook -t :=%s pane-focus-in {
+        run 'tmux set-option -s '@%s' "#{buffer_sample}"'
+        run 'tmux delete-buffer'
+        run 'tmux next-window'
+      }
+      """ % (self.waitfor, index, name))
 
-def compile_const(self, program):
-  program.push_constant(self.value)
+  def get_variable(self, name):
+    index = self.next_window_index()
+    self.write("""\
+      new-window 'tmux wait-for %s'
+      set-hook -t :=%s pane-focus-in {
+        run 'tmux set-buffer "#{@%s}"'
+        run 'tmux next-window'
+      }
+      """ % (self.waitfor, index, name))
+
+
+class Program:
+  def __init__(self):
+    self.buffer = []
+    self.functions = dict()
+    self.index = 0
+
+  def add_func(self, *args):
+    func = Function(*args)
+    self.functions[func.name] = func
+    return func
+
+  def to_string(self):
+    GLOBAL = textwrap.dedent('''
+      set -g display-time 2000
+      set -g focus-events on
+    ''')
+    return GLOBAL + '\n'.join(f.to_string() for f in self.functions.values())
+
+def compile_func(self, program):
+  func = program.add_func(self.name)
+  func.debug("FUNCTION: " + func.name)
+  func.write("""\
+      new-session -d -n %s 'read && tmux wait-for -S %s'
+      """ % (func.name, func.waitfor))
+
+  # bind args from stack
+  # run body
+  for expr in self.body:
+    expr.compile_to(func)
+  # return
+ast.FunctionDef.compile_to = compile_func
+
+def compile_return(self, func):
+  self.value.compile_to(func)
+  func.write("return from %s" % func.name)
+ast.Return.compile_to = compile_return
+
+def compile_assign(self, func):
+  if len(self.targets) != 1:
+    raise Exception("only one assignment target pls")
+  self.value.compile_to(func)
+  name = self.targets[0].id
+  func.set_variable(name)
+ast.Assign.compile_to = compile_assign
+
+def compile_name(self, func):
+  func.get_variable(self.id)
+ast.Name.compile_to = compile_name
+
+ast.Add.compile_to = lambda self, func: func.maths_op('+')
+ast.Sub.compile_to = lambda self, func: func.maths_op('-')
+ast.Mult.compile_to = lambda self, func: func.maths_op('*')
+ast.Div.compile_to = lambda self, func: func.maths_op('/')
+
+def compile_const(self, func):
+  func.push_constant(self.value)
 ast.Constant.compile_to = compile_const
 
-def compile_binop(self, program):
-  self.left.compile_to(program)
-  self.right.compile_to(program)
-  self.op.compile_to(program)
+def compile_binop(self, func):
+  self.left.compile_to(func)
+  self.right.compile_to(func)
+  self.op.compile_to(func)
 ast.BinOp.compile_to = compile_binop
 
-def compile_call(self, program):
+def compile_call(self, func):
   for arg in self.args:
-    arg.compile_to(program)
+    arg.compile_to(func)
   if self.func.id == 'print':
-    p.print()
+    func.print()
   else:
     raise Exception("only print is supported")
 ast.Call.compile_to = compile_call
 
-def compile_expr(self, program):
-  self.value.compile_to(program)
+def compile_expr(self, func):
+  self.value.compile_to(func)
 ast.Expr.compile_to = compile_expr
 
 def compile_module(self, program):
-  program.add_header()
   for expr in self.body:
-    expr.compile_to(program)
-  p.write('select-window -t :=0')
+    if type(expr) is ast.FunctionDef:
+      expr.compile_to(program)
+    else:
+      raise Exception("only functions at top level")
 
 ast.Module.compile_to = compile_module
 
 
 p = Program()
-# p.push_constant(1)
-# cb = p.cond()
-# p.print_str("Hello world")
-# # p.print_str("second print")
-# p.write('new-window')
-# cb()
-# p.write('select-window -t :=0')
-# 
-# print(p.to_string())
 
 
 with open(sys.argv[1]) as f:

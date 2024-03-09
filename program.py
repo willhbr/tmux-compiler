@@ -1,2 +1,6 @@
+def my_function(a, b):
+  return a * b
 
-print(5 + 3 - 1)
+def main():
+  a = 5
+  print(a)
