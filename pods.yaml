@@ -12,3 +12,16 @@ containers:
         - python
         - main.py
       workdir: /src
+  bf:
+    name: tmux-compiler-dev
+    image: docker.io/library/python:latest
+    interactive: true
+    autoremove: true
+    bind_mounts:
+      # binding the source directory lets us re-run changes without rebuilding
+      .: /src
+    run_flags:
+      entrypoint:
+        - python
+        - brainfuck.py
+      workdir: /src
