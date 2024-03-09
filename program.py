@@ -1,6 +1,5 @@
-def my_function(a, b):
-  return a * b
+# def my_function(a, b):
+#   while a + 10:
+#     3 + 5
 
-def main():
-  a = my_function(4, 5)
-  print(a)
+print(2 * 3)

@@ -15,6 +15,7 @@ class Function:
   def debug(self, text):
     self.buffer.append('\n# ' + text)
   def write(self, contents, index=None):
+    self.debug('Instruction num: ' + str(index or self.index))
     if contents is None:
       self.buffer.append(None)
     elif index is None:
@@ -78,7 +79,7 @@ class Function:
     instruction_index = self.next_window_index()
     pos = self.write(None)
     def add_with_indexes_later():
-      self.write(self.new_window("""\
+      self.write(self.new_window("""
           run 'tmux select-window -t "#{?#{buffer_sample},:=%s,:=%s}"'
           run 'tmux delete-buffer'
         """ % (instruction_index + 1, self.index)), pos)
@@ -102,13 +103,31 @@ class Function:
         run 'tmux switch-client -t %s'
       """ % name))
 
+  def goto(self):
+    index = self.write(None)
+    def doit():
+      self.write(self.new_window("""
+          run 'tmux select-window -t :=%s'
+        """ % self.index), index)
+    return doit
 
+  def jump(self, index):
+    self.write(self.new_window("""
+        run 'tmux select-window -t :=%s'
+      """ % index))
 
 class Program:
   def __init__(self):
     self.functions = dict()
+    func = self.main = self.add_func('main')
+    func.debug("FUNCTION: " + func.name)
+    func.write("""\
+        new-session -d -s %s 'read && tmux wait-for -S %s'
+        """ % (func.name, func.waitfor))
 
   def add_func(self, name):
+    if name in self.functions:
+      raise Exception("function already defined: " + name)
     func = Function(name, self)
     self.functions[func.name] = func
     return func
@@ -120,6 +139,42 @@ class Program:
     ''')
     FOOTER = '\nattach -t main'
     return GLOBAL + '\n'.join(f.to_string() for f in self.functions.values()) + FOOTER
+
+def compile_if(self, func):
+  func.debug("if condition")
+  self.test.compile_to(func)
+  cb = func.cond()
+  for expr in self.body:
+    expr.compile_to(func)
+  goto = func.goto()
+  cb()
+  for expr in self.orelse:
+    expr.compile_to(func)
+  goto()
+ast.If.compile_to = compile_if
+
+def compile_while(self, func):
+  startindex = func.index + 1
+  func.debug("while condition:")
+  self.test.compile_to(func)
+  cb = func.cond()
+  func.debug("while body:")
+  for expr in self.body:
+    expr.compile_to(func)
+  func.jump(startindex)
+  func.debug("while end")
+  cb()
+ast.While.compile_to = compile_while
+
+def compile_compare(self, func):
+  self.left.compile_to(func)
+  if len(self.comparators) != 1:
+    raise Exception("only compare one thing!")
+  self.comparators[0].compile_to(func)
+  if len(self.ops) != 1:
+    raise Exception("only compare one op!")
+  self.ops[0].compile_to(func)
+ast.Compare.compile_to = compile_compare
 
 def compile_func(self, program):
   func = program.add_func(self.name)
@@ -160,6 +215,9 @@ def compile_name(self, func):
   func.get_variable(self.id)
 ast.Name.compile_to = compile_name
 
+ast.Eq.compile_to = lambda self, func: func.maths_op('==')
+ast.Lt.compile_to = lambda self, func: func.maths_op('<')
+ast.Gt.compile_to = lambda self, func: func.maths_op('>')
 ast.Add.compile_to = lambda self, func: func.maths_op('+')
 ast.Sub.compile_to = lambda self, func: func.maths_op('-')
 ast.Mult.compile_to = lambda self, func: func.maths_op('*')
@@ -196,7 +254,7 @@ def compile_module(self, program):
     if type(expr) is ast.FunctionDef:
       expr.compile_to(program)
     else:
-      raise Exception("only functions at top level")
+      expr.compile_to(program.main)
 
 ast.Module.compile_to = compile_module
 
