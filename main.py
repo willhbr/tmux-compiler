@@ -3,7 +3,8 @@ import sys
 import textwrap
 
 class Function:
-  def __init__(self, name):
+  def __init__(self, name, program):
+    self.program = program
     self.waitfor = 'main'
     self.name = name
     self.index = 0
@@ -12,7 +13,7 @@ class Function:
     self.index += 1
     return self.index
   def debug(self, text):
-    self.buffer.append('\n# ' + text + '\n')
+    self.buffer.append('\n# ' + text)
   def write(self, contents, index=None):
     if contents is None:
       self.buffer.append(None)
@@ -26,105 +27,89 @@ class Function:
   def to_string(self):
     return '\n'.join(self.buffer)
 
+  def new_window(self, body, index = None):
+    index = index or self.next_window_index()
+    target = self.name + ':{end}'
+    return textwrap.dedent("""\
+      new-window -a -t '%s' 'tmux wait-for %s'
+      set-hook -t '%s' pane-focus-in {\
+    """ % (target, self.waitfor, target) + body) + '}\n'
+
   def push_constant(self, value):
-    index = self.next_window_index()
-    self.write("""\
-      new-window 'tmux wait-for %s'
-      set-hook -t :=%s pane-focus-in {
+    self.write(self.new_window("""
         run "tmux set-buffer '%s'"
         run 'tmux next-window'
-      }
-      """ % (self.waitfor, index, value))
+      """ % value))
 
-  def store_top(self, out_index=None):
+  def store_top(self):
     index = self.next_window_index()
-    self.write("""\
-      new-window 'tmux wait-for %s'
-      set-hook -t :=%s pane-focus-in {
+    self.write(self.new_window("""
         run 'tmux rename-window -t :=%s "#{buffer_sample}"'
         run 'tmux delete-buffer'
         run 'tmux next-window'
-      }
-      """ % (self.waitfor, index, index + 1 if out_index is None else out_index))
+      """ % (index + 1), index))
 
   def maths_op(self, op):
     self.store_top()
+
     index = self.next_window_index()
-    self.write("""\
-      new-window 'tmux wait-for %s'
-      set-hook -t :=%s pane-focus-in {
+    self.write(self.new_window("""
         run 'tmux rename-window -t :=%s "#{e|%s:#{buffer_sample},#{window_name}}"'
         run 'tmux delete-buffer'
         run 'tmux set-buffer "#{window_name}"'
         run 'tmux next-window'
-      }
-      """ % (self.waitfor, index, index, op))
+      """ % (index, op), index))
 
   def print(self):
-    index = self.next_window_index()
-    self.write("""\
-      new-window 'tmux wait-for %s'
-      set-hook -t :=%s pane-focus-in {
+    self.write(self.new_window("""
         run 'tmux display -F "#{buffer_sample}"'
         run 'tmux delete-buffer'
         run 'tmux next-window'
-      }
-      """ % (self.waitfor, index))
+      """))
 
   def print_str(self, text):
-    index = self.next_window_index()
-    self.write("""\
-      new-window 'tmux wait-for %s'
-      set-hook -t :=%s pane-focus-in {
+    self.write(self.new_window("""\
         run 'tmux display -F "%s"'
         run 'sleep 2'
         run 'tmux next-window'
-      }
-      """ % (self.waitfor, index, text))
+      """ % text))
 
   def cond(self):
     instruction_index = self.next_window_index()
     pos = self.write(None)
     def add_with_indexes_later():
-      self.write("""\
-        new-window 'tmux wait-for %s'
-        set-hook -t :=%s pane-focus-in {
+      self.write(self.new_window("""\
           run 'tmux select-window -t "#{?#{buffer_sample},:=%s,:=%s}"'
           run 'tmux delete-buffer'
-        }
-        """ % (self.waitfor, instruction_index, instruction_index + 1, self.index + 1), pos)
+        """ % (instruction_index + 1, self.index)), pos)
     return add_with_indexes_later
 
   def set_variable(self, name):
-    index = self.next_window_index()
-    self.write("""\
-      new-window 'tmux wait-for %s'
-      set-hook -t :=%s pane-focus-in {
+    self.write(self.new_window("""
         run 'tmux set-option -s '@%s' "#{buffer_sample}"'
         run 'tmux delete-buffer'
         run 'tmux next-window'
-      }
-      """ % (self.waitfor, index, name))
+      """ % name))
 
   def get_variable(self, name):
-    index = self.next_window_index()
-    self.write("""\
-      new-window 'tmux wait-for %s'
-      set-hook -t :=%s pane-focus-in {
+    self.write(self.new_window("""
         run 'tmux set-buffer "#{@%s}"'
         run 'tmux next-window'
-      }
-      """ % (self.waitfor, index, name))
+      """ % name))
+
+  def switch_session(self, name):
+    self.write(self.new_window("""
+        run 'tmux switch-client -t %s'
+      """ % name))
+
 
 
 class Program:
   def __init__(self):
-    self.buffer = []
     self.functions = dict()
-    self.index = 0
 
-  def add_func(self, *args):
-    func = Function(*args)
+  def add_func(self, name):
+    func = Function(name, self)
     self.functions[func.name] = func
     return func
 
@@ -133,25 +118,34 @@ class Program:
       set -g display-time 2000
       set -g focus-events on
     ''')
-    return GLOBAL + '\n'.join(f.to_string() for f in self.functions.values())
+    FOOTER = '\nattach -t main'
+    return GLOBAL + '\n'.join(f.to_string() for f in self.functions.values()) + FOOTER
 
 def compile_func(self, program):
   func = program.add_func(self.name)
   func.debug("FUNCTION: " + func.name)
   func.write("""\
-      new-session -d -n %s 'read && tmux wait-for -S %s'
+      new-session -d -s %s 'read && tmux wait-for -S %s'
       """ % (func.name, func.waitfor))
 
-  # bind args from stack
-  # run body
+  # args added to stack from first to last
+  for arg in reversed(self.args.args):
+    func.debug("SET arg %s IN %s" % (arg.arg, func.name))
+    func.set_variable(arg.arg)
+
   for expr in self.body:
     expr.compile_to(func)
-  # return
+  if type(self.body[-1]) is not ast.Return:
+    do_return(func)
+  func.write('select-window -t :=0')
 ast.FunctionDef.compile_to = compile_func
+
+def do_return(func):
+  func.debug("RETURN from %s" % func.name)
 
 def compile_return(self, func):
   self.value.compile_to(func)
-  func.write("return from %s" % func.name)
+  do_return(func)
 ast.Return.compile_to = compile_return
 
 def compile_assign(self, func):
@@ -187,7 +181,10 @@ def compile_call(self, func):
   if self.func.id == 'print':
     func.print()
   else:
-    raise Exception("only print is supported")
+    if self.func.id in func.program.functions:
+      func.switch_session(self.func.id)
+    else:
+      raise Exception("unknown func: " + self.func.id)
 ast.Call.compile_to = compile_call
 
 def compile_expr(self, func):
