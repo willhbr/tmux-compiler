@@ -17,33 +17,35 @@ class Program:
   def new_window(self, body, index = None):
     index = index or self.next_window_index()
     target = ':{end}'
+    colour = 16 + (index % (231 - 16))
     return textwrap.dedent("""\
       # instruction number %s
       new-window -a -t '%s' 'tmux wait-for %s'
+      set -w -t '%s' window-style bg=colour%s
       set-hook -t '%s' pane-focus-in {\
-    """ % (index, target, self.waitfor, target) + body) + '}\n'
+    """ % (index, target, self.waitfor, target, colour, target) + body) + '}\n'
   def append(self, text):
     self.buffer.append(textwrap.dedent(text))
 
   def move_right(self):
     self.append(self.new_window("""
-        run 'tmux rename-session "#{e|+:#S,1}"'
+        run 'tmux rename-session -- "#{e|+:#S,1}"'
         run 'tmux next-window'
         """))
   def move_left(self):
     self.append(self.new_window("""
-        run 'tmux rename-session "#{e|-:#S,1}"'
+        run 'tmux rename-session -- "#{e|-:#S,1}"'
         run 'tmux next-window'
         """))
 
   def inc(self):
     self.append(self.new_window("""
-        run 'tmux set -s "@data-#S" "#{e|+:#{E:##{@data-#S#}},1}"'
+        run 'tmux set -s "@data-#S" "#{e|%:#{e|+:#{E:##{@data-#S#}},1},256}"'
         run 'tmux next-window'
         """))
   def dec(self):
     self.append(self.new_window("""
-        run 'tmux set -s "@data-#S" "#{e|-:#{E:##{@data-#S#}},1}"'
+        run 'tmux set -s "@data-#S" "#{e|%:#{e|+:#{E:##{@data-#S#}},255},256}"'
         run 'tmux next-window'
         """))
 
@@ -55,8 +57,8 @@ class Program:
         """))
   def write(self):
     self.append(self.new_window("""
-        run 'tmux send-keys -t ":=0" "#{E:##{@data-#S#}}"'
-        run 'tmux set -s "@output" "#{@output}#{E:##{@data-#S#}}"'
+        run 'tmux send-keys -t ":=0" "#{a:#{e|+:0,#{E:##{@data-#S#}}}}"'
+        run 'tmux set -s "@output" "#{@output}#{a:#{e|+:0,#{E:##{@data-#S#}}}}"'
         run 'tmux next-window'
         """))
 
@@ -105,7 +107,7 @@ def compile(program):
   return output.to_string()
 
 
-program = ',+>,+><<.>.'
+program = '++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++.'
 comp = compile(program)
 print(comp)
 with open(sys.argv[1], 'wt') as o:
