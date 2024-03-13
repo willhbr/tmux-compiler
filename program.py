@@ -1,8 +1,5 @@
-# def my_function(a, b):
-#   while a + 10:
-#     3 + 5
+def my_function():
+  print(4)
 
-while 1 != 1:
-  print(2)
-
+my_function()
 print(3)

@@ -22,7 +22,7 @@ class Function:
       self.buffer[index] = textwrap.dedent(contents)
     return len(self.buffer) - 1
   def to_string(self):
-    return '\n'.join(self.buffer) + "\nselect-window -t :=0"
+    return '\n'.join(self.buffer)
 
   def new_window(self, body, index = None):
     index = index or self.next_window_index()
@@ -95,10 +95,17 @@ class Function:
         run 'tmux next-window'
       """ % name))
 
-  def switch_session(self, other_func):
+  def switch_session(self, name):
     self.write(self.new_window("""
-        run 'tmux switch-client -t %s'
+        run 'tmux switch-client -t %s:1'
       """ % name))
+
+  def switch_back(self):
+    self.write(self.new_window("""
+        run 'tmux rename-window "#{buffer_sample}"'
+        run 'tmux delete-buffer'
+        run 'tmux switch-client -t "#{window_name}"'
+      """))
 
   def goto(self):
     index = self.write(None)
@@ -173,12 +180,12 @@ def compile_func(self, program):
   func = program.add_func(self.name)
   func.write("""\
       # FUNCTION: %s
-      new-session -d -s %s 'read && tmux wait-for -S %s'
+      new-session -d -s %s 'tmux wait-for %s'
       """ % (func.name, func.name, func.waitfor))
 
   # args added to stack from first to last
-  func.arg_count += 1
   for arg in reversed(self.args.args):
+    func.arg_count += 1
     func.set_variable(arg.arg)
 
   for expr in self.body:
@@ -189,7 +196,11 @@ def compile_func(self, program):
 ast.FunctionDef.compile_to = compile_func
 
 def do_return(func):
-  func.debug("RETURN from %s" % func.name)
+  # TODO: swap return value and next stack element to get return point
+  # put return value back on top of stack
+  # switch to return point
+  func.write("# RETURN from %s" % func.name)
+  func.switch_back()
 
 def compile_return(self, func):
   self.value.compile_to(func)
@@ -228,21 +239,22 @@ def compile_binop(self, func):
 ast.BinOp.compile_to = compile_binop
 
 def compile_call(self, func):
+  # TODO: add return address to stack
   for arg in self.args:
     arg.compile_to(func)
   if self.func.id == 'print':
     if len(self.args) != 1:
       raise Exception("print only takes one argument")
     func.print()
-  else:
-    if self.func.id in func.program.functions:
-      newfunc = func.program.functions[self.func.id]
-      if newfunc.arg_count != len(self.args):
-        raise Exception("Wrong number of args to call {} got {} expected {}".format(
-          self.func.id, newfunc.arg_count, len(self.args)))
-      func.switch_session(self.func.id)
-    else:
-      raise Exception("unknown func: " + self.func.id)
+    return
+  if self.func.id not in func.program.functions:
+    raise Exception("unknown func: " + self.func.id)
+  newfunc = func.program.functions[self.func.id]
+  if newfunc.arg_count != len(self.args):
+    raise Exception("Wrong number of args to call {} got {} expected {}".format(
+      self.func.id, len(self.args), newfunc.arg_count))
+  func.push_constant(func.name + ':' + str(func.next_window_index() + 2))
+  func.switch_session(self.func.id)
 ast.Call.compile_to = compile_call
 
 def compile_expr(self, func):
@@ -255,6 +267,8 @@ def compile_module(self, program):
       expr.compile_to(program)
     else:
       expr.compile_to(program.main)
+
+  program.main.write('select-window -t :=0')
 
 ast.Module.compile_to = compile_module
 
