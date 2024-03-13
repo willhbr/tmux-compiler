@@ -7,15 +7,11 @@ class Function:
     self.program = program
     self.waitfor = 'main'
     self.name = name
-    self.index = 0
     self.buffer = []
+    self.arg_count = 0
   def next_window_index(self):
-    self.index += 1
-    return self.index
-  def debug(self, text):
-    self.buffer.append('\n# ' + text)
+    return len(self.buffer)
   def write(self, contents, index=None):
-    self.debug('Instruction num: ' + str(index or self.index))
     if contents is None:
       self.buffer.append(None)
     elif index is None:
@@ -23,18 +19,19 @@ class Function:
     elif self.buffer[index] is not None:
       raise Exception("Invalid instruction overwrite")
     else:
-      self.buffer[index] = textwrap.dedent(contents) 
+      self.buffer[index] = textwrap.dedent(contents)
     return len(self.buffer) - 1
   def to_string(self):
-    return '\n'.join(self.buffer)
+    return '\n'.join(self.buffer) + "\nselect-window -t :=0"
 
   def new_window(self, body, index = None):
     index = index or self.next_window_index()
     target = self.name + ':{end}'
     return textwrap.dedent("""\
+      # index: %s
       new-window -a -t '%s' 'tmux wait-for %s'
       set-hook -t '%s' pane-focus-in {\
-    """ % (target, self.waitfor, target) + body) + '}\n'
+    """ % (index, target, self.waitfor, target) + body) + '}\n'
 
   def push_constant(self, value):
     self.write(self.new_window("""
@@ -82,7 +79,7 @@ class Function:
       self.write(self.new_window("""
           run 'tmux select-window -t "#{?#{buffer_sample},:=%s,:=%s}"'
           run 'tmux delete-buffer'
-        """ % (instruction_index + 1, self.index)), pos)
+        """ % (instruction_index + 1, self.next_window_index()), pos), pos)
     return add_with_indexes_later
 
   def set_variable(self, name):
@@ -98,7 +95,7 @@ class Function:
         run 'tmux next-window'
       """ % name))
 
-  def switch_session(self, name):
+  def switch_session(self, other_func):
     self.write(self.new_window("""
         run 'tmux switch-client -t %s'
       """ % name))
@@ -108,7 +105,7 @@ class Function:
     def doit():
       self.write(self.new_window("""
           run 'tmux select-window -t :=%s'
-        """ % self.index), index)
+        """ % self.next_window_index(), index), index)
     return doit
 
   def jump(self, index):
@@ -120,10 +117,10 @@ class Program:
   def __init__(self):
     self.functions = dict()
     func = self.main = self.add_func('main')
-    func.debug("FUNCTION: " + func.name)
     func.write("""\
+        # FUNCTION: %s
         new-session -d -s %s 'read && tmux wait-for -S %s'
-        """ % (func.name, func.waitfor))
+        """ % (func.name, func.name, func.waitfor))
 
   def add_func(self, name):
     if name in self.functions:
@@ -141,7 +138,6 @@ class Program:
     return GLOBAL + '\n'.join(f.to_string() for f in self.functions.values()) + FOOTER
 
 def compile_if(self, func):
-  func.debug("if condition")
   self.test.compile_to(func)
   cb = func.cond()
   for expr in self.body:
@@ -154,15 +150,12 @@ def compile_if(self, func):
 ast.If.compile_to = compile_if
 
 def compile_while(self, func):
-  startindex = func.index + 1
-  func.debug("while condition:")
+  startindex = func.next_window_index()
   self.test.compile_to(func)
   cb = func.cond()
-  func.debug("while body:")
   for expr in self.body:
     expr.compile_to(func)
   func.jump(startindex)
-  func.debug("while end")
   cb()
 ast.While.compile_to = compile_while
 
@@ -178,14 +171,14 @@ ast.Compare.compile_to = compile_compare
 
 def compile_func(self, program):
   func = program.add_func(self.name)
-  func.debug("FUNCTION: " + func.name)
   func.write("""\
+      # FUNCTION: %s
       new-session -d -s %s 'read && tmux wait-for -S %s'
-      """ % (func.name, func.waitfor))
+      """ % (func.name, func.name, func.waitfor))
 
   # args added to stack from first to last
+  func.arg_count += 1
   for arg in reversed(self.args.args):
-    func.debug("SET arg %s IN %s" % (arg.arg, func.name))
     func.set_variable(arg.arg)
 
   for expr in self.body:
@@ -216,6 +209,7 @@ def compile_name(self, func):
 ast.Name.compile_to = compile_name
 
 ast.Eq.compile_to = lambda self, func: func.maths_op('==')
+ast.NotEq.compile_to = lambda self, func: func.maths_op('!=')
 ast.Lt.compile_to = lambda self, func: func.maths_op('<')
 ast.Gt.compile_to = lambda self, func: func.maths_op('>')
 ast.Add.compile_to = lambda self, func: func.maths_op('+')
@@ -237,9 +231,15 @@ def compile_call(self, func):
   for arg in self.args:
     arg.compile_to(func)
   if self.func.id == 'print':
+    if len(self.args) != 1:
+      raise Exception("print only takes one argument")
     func.print()
   else:
     if self.func.id in func.program.functions:
+      newfunc = func.program.functions[self.func.id]
+      if newfunc.arg_count != len(self.args):
+        raise Exception("Wrong number of args to call {} got {} expected {}".format(
+          self.func.id, newfunc.arg_count, len(self.args)))
       func.switch_session(self.func.id)
     else:
       raise Exception("unknown func: " + self.func.id)

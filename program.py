@@ -2,4 +2,7 @@
 #   while a + 10:
 #     3 + 5
 
-print(2 * 3)
+while 1 != 1:
+  print(2)
+
+print(3)
