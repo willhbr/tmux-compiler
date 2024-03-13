@@ -174,11 +174,14 @@ def compile_if(self, func):
   cb = func.cond()
   for expr in self.body:
     expr.compile_to(func)
+    func.pop_stack()
   goto = func.goto()
   cb()
   for expr in self.orelse:
     expr.compile_to(func)
+    func.pop_stack()
   goto()
+  func.push_constant(0)
 ast.If.compile_to = compile_if
 
 def compile_boolop(self, func):
@@ -201,8 +204,10 @@ def compile_while(self, func):
   cb = func.cond()
   for expr in self.body:
     expr.compile_to(func)
+    func.pop_stack()
   func.jump(startindex)
   cb()
+  func.push_constant(0)
 ast.While.compile_to = compile_while
 
 def compile_compare(self, func):
@@ -231,6 +236,7 @@ def compile_func(self, program):
     expr.compile_to(func)
     func.pop_stack()
   if type(self.body[-1]) is not ast.Return:
+    func.push_constant(0)
     func.switch_back()
   func.write('select-window -t :=0')
 ast.FunctionDef.compile_to = compile_func
@@ -246,6 +252,7 @@ def compile_assign(self, func):
   self.value.compile_to(func)
   name = self.targets[0].id
   func.set_variable(name)
+  func.push_constant(0)
 ast.Assign.compile_to = compile_assign
 
 def compile_name(self, func):
@@ -254,6 +261,7 @@ ast.Name.compile_to = compile_name
 
 ast.Eq.compile_to = lambda self, func: func.maths_op('==')
 ast.NotEq.compile_to = lambda self, func: func.maths_op('!=')
+ast.Mod.compile_to = lambda self, func: func.maths_op('%')
 ast.Lt.compile_to = lambda self, func: func.maths_op('<')
 ast.Gt.compile_to = lambda self, func: func.maths_op('>')
 ast.Add.compile_to = lambda self, func: func.maths_op('+')
@@ -303,6 +311,7 @@ def compile_module(self, program):
       expr.compile_to(program)
     else:
       expr.compile_to(program.main)
+      program.main.pop_stack()
 
   program.main.write('select-window -t :=0')
 

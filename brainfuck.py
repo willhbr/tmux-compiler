@@ -100,6 +100,7 @@ def compile(program):
     elif char == ',':
       output.read()
     elif char == '[':
+      # TODO: this won't work if there are other characters in the input
       output.jump(pairs[i], True)
     elif char == ']':
       output.jump(pairs[i], False)
@@ -107,7 +108,9 @@ def compile(program):
   return output.to_string()
 
 
-program = '++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++.'
+with open(sys.argv[1]) as f:
+  program = f.read()
+
 comp = compile(program)
 print(comp)
 with open(sys.argv[1], 'wt') as o:
