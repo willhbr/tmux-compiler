@@ -113,5 +113,5 @@ with open(sys.argv[1]) as f:
 
 comp = compile(program)
 print(comp)
-with open(sys.argv[1], 'wt') as o:
+with open(sys.argv[2], 'wt') as o:
   o.write(comp)

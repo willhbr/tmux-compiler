@@ -7,4 +7,7 @@ def is_prime(num):
 
   return 1
 
-print(is_prime(13))
+if is_prime(13):
+  print("13 is prime!")
+else:
+  print("not prime :(")
