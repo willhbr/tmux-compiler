@@ -1,6 +1,6 @@
 # Compiling code to tmux
 
-Read more about it on [my blog](https://willhbr.net).
+Read more about it on [my blog](https://willhbr.net/2024/03/15/making-a-compiler-to-prove-tmux-is-turing-complete/) or [watch a demo](https://youtu.be/6V3KnjiBuhU).
 
 Usage for Python:
 
